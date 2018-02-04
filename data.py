@@ -7,6 +7,10 @@ from algoliasearch import algoliasearch
 from github import Github
 from bs4 import BeautifulSoup
 import os
+from flask import Flask
+from flask import request, jsonify
+
+app = Flask(__name__)
 
 container = []
 
@@ -68,11 +72,11 @@ def get_producthunt(query):
 def get_github (search_query):
     global container
     g = Github("testhacks", "random123")
-    _ = {}
     counter = 0
     for repo in g.search_repositories(search_query, sort = "stars", order= "desc").get_page(0):
         if counter == 5: break
         _ ['title'] = repo.name
+        _ = {}
         _ ['tagline'] = repo.description
         _ ['url'] = repo.html_url
         _ ['tags'] = repo.language
@@ -87,12 +91,12 @@ def get_googleplay(search_query):
     search_url = "https://play.google.com/store/search?q="+ search_query +"&c=apps&hl=en"
     page = requests.get(search_url)
     data = page.text
-    results = {}
 
     soup = BeautifulSoup(data, "lxml")
     counter = 0
     for link in soup.find_all('div', attrs = {"class" : "details"}):
         if (counter == 5): break
+        results = {}
         #for _ in link.find_all ('a'):
         href = link.find ("a").get("href")
         url = "https://play.google.com" + href
@@ -126,35 +130,24 @@ def getScore(title, desc):
     print(container)
     payload = { "title": title, "description": desc, "candidates": container }
     resp = requests.post('http://52.233.33.65:5000/score', data = json.dumps(payload))
-    payload = json.dumps(resp.json())
-    print(payload)
-    #response.write(payload)
-    print("DONE!")
-    #return response.close()
+    return json.dumps(resp.json())
 
-#postdata = json.loads(open(os.environ['req']).read())
-#response = open(os.environ['res'], 'w')
-postdata = {
-	"name": "orchestra conductor",
-	"description": "app conduct orchestra with phone",
-	"sites": {
-		"devpost": "t",
-    "github": "t"
-	}
-}
-title = postdata['name']
-description = postdata['description']
-tokens = description.split(' ')
-sites = postdata['sites']
-
-
-t1 = threading.Thread(target=get_devpost, args=(create_query(tokens), ))
-t2 = threading.Thread(target=get_github, args=(description, ))
-t3 = threading.Thread(target=get_googleplay, args=(description, ))
-t4 = threading.Thread(target=get_producthunt, args=(description, ))
-threads = { "devpost": t1, "github": t2, "producthunt": t3, "googleplay": t4}
-
-for key, val in sites.items():
+@app.route('/score', methods=['POST'])
+def score():
+  content = request.get_json(force = True)
+  print("Received data: ", content)
+  title = content['name']
+  description = content['description']
+  tokens = description.split(' ')
+  sites = content['sites']
+  t1 = threading.Thread(target=get_devpost, args=(create_query(tokens), ))
+  t2 = threading.Thread(target=get_github, args=(description, ))
+  t3 = threading.Thread(target=get_googleplay, args=(description, ))
+  t4 = threading.Thread(target=get_producthunt, args=(description, ))
+  threads = { "devpost": t1, "github": t2, "producthunt": t3, "googleplay": t4}
+  for key, val in sites.items():
     if val == 't': threads[key].start()
+  return getScore(title, description)
 
-getScore(title, description)
+if __name__ == '__main__':
+  app.run()
