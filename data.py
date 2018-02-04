@@ -1,4 +1,5 @@
 # Imports
+import time
 from functools import wraps
 import requests, json, time
 import threading
@@ -9,8 +10,10 @@ from bs4 import BeautifulSoup
 import os
 from flask import Flask
 from flask import request, jsonify
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 container = []
 
@@ -35,6 +38,7 @@ def get_devpost(query):
             product_data['tagline'] = project['tagline']
             product_data['image_url'] = project['photo']
             product_data['tags'] = project['tags']
+            product_data['origin'] = 'Devpost'
             print(product_data)
             container.append(product_data)
             counter += 1
@@ -57,6 +61,7 @@ def get_producthunt(query):
             product_data['tagline'] = project['tagline']
             product_data['url'] = 'https://www.producthunt.com/' + project['url']
             product_data['image_url'] = project['thumbnail']['image_url']
+            product_data['origin'] = 'ProductHunt'
 
             topics_array = []
             for topic in project['topics']:
@@ -75,12 +80,13 @@ def get_github (search_query):
     counter = 0
     for repo in g.search_repositories(search_query, sort = "stars", order= "desc").get_page(0):
         if counter == 5: break
-        _ ['title'] = repo.name
         _ = {}
+        _ ['title'] = repo.name
         _ ['tagline'] = repo.description
         _ ['url'] = repo.html_url
-        _ ['tags'] = repo.language
+        _ ['tags'] = [repo.language]
         _ ['image_url'] = None
+        _ ['origin'] = 'Github'
         container.append(_)
         counter += 1
     print('GITHUB TIME: ', time.time())
@@ -106,6 +112,7 @@ def get_googleplay(search_query):
             results ['title'] = title
             results ['tagline'] = description
             results ['url'] = url
+            results ['origin'] = 'Google Play'
             results ['tags'] = None
             results ['image_url'] = None
             container.append(results)
@@ -123,21 +130,46 @@ def delay(delay=0.):
         return delayed
     return wrap
 
-@delay(0.8)
 def getScore(title, desc):
     #global response
     global container
     print(container)
     payload = { "title": title, "description": desc, "candidates": container }
+    print(payload)
     resp = requests.post('http://52.233.33.65:5000/score', data = json.dumps(payload))
     return json.dumps(resp.json())
 
+text_analytics_base_url = "https://eastus.api.cognitive.microsoft.com/text/analytics/v2.0/keyPhrases"
+
+def processDescription(desc):
+  headers = {
+      # Request headers
+      'Content-Type': 'application/json',
+      'Ocp-Apim-Subscription-Key': 'adf14f2ab244459aac058cea4c3a5108',
+  }
+  payload = {
+    "documents": [
+      {
+        "language": "en",
+        "id": "1",
+        "text": desc
+      }
+    ]
+  }
+  r = requests.post(text_analytics_base_url, headers=headers, data=json.dumps(payload))
+  return ' '.join((r.json()["documents"][0])['keyPhrases'])
+  
+
 @app.route('/score', methods=['POST'])
-def score():
-  content = request.get_json(force = True)
+def score(): 
+  content = request.get_json()
+  print(request.headers['Content-Type'])
   print("Received data: ", content)
   title = content['name']
   description = content['description']
+  if len(description) > 45:
+    description = processDescription(description)
+    print("Adjusted description: ", description)
   tokens = description.split(' ')
   sites = content['sites']
   t1 = threading.Thread(target=get_devpost, args=(create_query(tokens), ))
@@ -146,8 +178,10 @@ def score():
   t4 = threading.Thread(target=get_producthunt, args=(description, ))
   threads = { "devpost": t1, "github": t2, "producthunt": t3, "googleplay": t4}
   for key, val in sites.items():
-    if val == 't': threads[key].start()
-  return getScore(title, description)
+    if val == 't' and key in threads: threads[key].start()
+  time.sleep(1.05) 
+  msg = getScore(title, description)
+  return msg
 
 if __name__ == '__main__':
   app.run()
