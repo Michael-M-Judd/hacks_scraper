@@ -167,7 +167,7 @@ def score():
   print("Received data: ", content)
   title = content['name']
   description = content['description']
-  if len(description) > 45:
+  if len(description) > 75:
     description = processDescription(description)
     print("Adjusted description: ", description)
   tokens = description.split(' ')
