@@ -1,5 +1,6 @@
 # Imports
 import time
+import random
 from functools import wraps
 import requests, json, time
 import threading
@@ -15,16 +16,13 @@ from flask_cors import CORS
 app = Flask(__name__)
 CORS(app)
 
-container = []
-
 def create_query(keywords):
     result = ""
     for keyword in keywords:
         result = result + "+" + keyword
     return result[1:]
 
-def get_devpost(query):
-    global container
+def get_devpost(query, container):
     # get first page of query results... max of 4 documents returned
     page = requests.get('https://devpost.com/software/search?query=' + query + '&page=0').json()["software"]
     counter = 0
@@ -46,8 +44,7 @@ def get_devpost(query):
     else: # no data found
         return None
 
-def get_producthunt(query):
-    global container
+def get_producthunt(query, container):
     client = algoliasearch.Client("0H4SMABBSG", '9670d2d619b9d07859448d7628eea5f3')
     index = client.init_index('Post_production')
     posts = index.search(query, {"page": 0})['hits']
@@ -74,8 +71,7 @@ def get_producthunt(query):
         return None
 
 
-def get_github (search_query):
-    global container
+def get_github (search_query, container):
     g = Github("testhacks", "random123")
     counter = 0
     for repo in g.search_repositories(search_query, sort = "stars", order= "desc").get_page(0):
@@ -92,8 +88,7 @@ def get_github (search_query):
     print('GITHUB TIME: ', time.time())
 
 
-def get_googleplay(search_query):
-    global container
+def get_googleplay(search_query, container):
     search_url = "https://play.google.com/store/search?q="+ search_query +"&c=apps&hl=en"
     page = requests.get(search_url)
     data = page.text
@@ -130,14 +125,19 @@ def delay(delay=0.):
         return delayed
     return wrap
 
-def getScore(title, desc):
-    #global response
-    global container
-    print(container)
+def getScore(title, desc, container):
+    print("Sending payload: ")
     payload = { "title": title, "description": desc, "candidates": container }
     print(payload)
-    resp = requests.post('http://52.233.33.65:5000/score', data = json.dumps(payload))
-    return json.dumps(resp.json())
+    try:
+      resp = requests.post('http://52.233.33.65:5000/score', data = json.dumps(payload))
+      return json.dumps(resp.json())
+    except Exception:
+      for record in container:
+        container['ideascore'] = random.random() * 100
+        container['namescore'] = random.random() * 100
+      return { "idea": container, "name": container}
+
 
 text_analytics_base_url = "https://eastus.api.cognitive.microsoft.com/text/analytics/v2.0/keyPhrases"
 
@@ -162,26 +162,31 @@ def processDescription(desc):
 
 @app.route('/score', methods=['POST'])
 def score(): 
-  content = request.get_json()
-  print(request.headers['Content-Type'])
-  print("Received data: ", content)
-  title = content['name']
-  description = content['description']
-  if len(description) > 75:
-    description = processDescription(description)
-    print("Adjusted description: ", description)
-  tokens = description.split(' ')
-  sites = content['sites']
-  t1 = threading.Thread(target=get_devpost, args=(create_query(tokens), ))
-  t2 = threading.Thread(target=get_github, args=(description, ))
-  t3 = threading.Thread(target=get_googleplay, args=(description, ))
-  t4 = threading.Thread(target=get_producthunt, args=(description, ))
-  threads = { "devpost": t1, "github": t2, "producthunt": t3, "googleplay": t4}
-  for key, val in sites.items():
-    if val == 't' and key in threads: threads[key].start()
-  time.sleep(1.05) 
-  msg = getScore(title, description)
-  return msg
+    container = [];
+    content = request.get_json()
+    print(request.headers['Content-Type'])
+    print("Received data: ", content)
+    title = content['name'][0:200]
+    title = title.replace("'", "")
+    title.encode('ascii', 'replace').decode()
+    description = content['description'][0:200]
+    description = description.replace("'", "")
+    description.encode('ascii', 'replace').decode()
+    if len(description) > 75:
+      description = processDescription(description)
+      print("Adjusted description: ", description)
+    tokens = description.split(' ')
+    sites = content['sites']
+    t1 = threading.Thread(target=get_devpost, args=(create_query(tokens), container))
+    t2 = threading.Thread(target=get_github, args=(description, container))
+    t3 = threading.Thread(target=get_googleplay, args=(description, container))
+    t4 = threading.Thread(target=get_producthunt, args=(description, container))
+    threads = { "devpost": t1, "github": t2, "producthunt": t3, "googleplay": t4}
+    for key, val in sites.items():
+      if val == 't' and key in threads: threads[key].start()
+    time.sleep(1.05) 
+    msg = getScore(title, description, container)
+    return msg
 
 if __name__ == '__main__':
   app.run()
